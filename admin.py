@@ -1,15 +1,19 @@
 import os
 import datetime
-from flask import Blueprint, render_template, redirect, url_for, request, flash, jsonify
+from flask import Blueprint, render_template, redirect, url_for, request, flash, jsonify, send_file, Response
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from flask_wtf import FlaskForm
 import uuid
 import csv
 import io
+try:
+    import openpyxl
+except ImportError:
+    openpyxl = None
 
 from app import db
-from models import User, Attendance
+from models import User, Attendance, TreeData
 from utils import admin_required
 
 admin_bp = Blueprint('admin', __name__)
@@ -319,6 +323,189 @@ def delete_attendance(attendance_id):
     
     flash('Attendance record has been deleted successfully.', 'success')
     return redirect(url_for('admin.attendance'))
+
+
+@admin_bp.route('/hierarchical')
+@login_required
+@admin_required
+def hierarchical():
+    # The page fetches the tree via AJAX from /admin/hierarchy-data
+    return render_template('admin/Hierarchical.html')
+
+
+def _build_tree():
+    roots = TreeData.query.filter_by(parent_id=None).order_by(TreeData.id).all()
+    return [root.to_dict() for root in roots]
+
+
+@admin_bp.route('/hierarchy-data')
+@login_required
+@admin_required
+def hierarchy_data():
+    tree = _build_tree()
+    return jsonify(tree)
+
+
+@admin_bp.route('/hierarchy-node', methods=['POST'])
+@login_required
+@admin_required
+def add_hierarchy_node():
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    parent_id = data.get('parent_id')
+
+    if not name:
+        return jsonify({'success': False, 'message': 'Name is required.'}), 400
+
+    if parent_id:
+        parent = TreeData.query.get(parent_id)
+        if not parent:
+            return jsonify({'success': False, 'message': 'Parent node not found.'}), 404
+
+    node = TreeData(name=name, parent_id=parent_id)
+    db.session.add(node)
+    db.session.commit()
+    return jsonify({'success': True, 'node': node.to_dict()}), 201
+
+
+@admin_bp.route('/hierarchy-node/<int:node_id>', methods=['PUT'])
+@login_required
+@admin_required
+def update_hierarchy_node(node_id):
+    node = TreeData.query.get_or_404(node_id)
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    parent_id = data.get('parent_id')
+
+    if not name:
+        return jsonify({'success': False, 'message': 'Name is required.'}), 400
+
+    if parent_id == node.id:
+        return jsonify({'success': False, 'message': 'A node cannot be its own parent.'}), 400
+
+    if parent_id:
+        parent = TreeData.query.get(parent_id)
+        if not parent:
+            return jsonify({'success': False, 'message': 'Parent node not found.'}), 404
+
+    node.name = name
+    node.parent_id = parent_id
+    db.session.commit()
+    return jsonify({'success': True, 'node': node.to_dict()}), 200
+
+
+@admin_bp.route('/hierarchy-node/<int:node_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_hierarchy_node(node_id):
+    node = TreeData.query.get_or_404(node_id)
+    db.session.delete(node)
+    db.session.commit()
+    return jsonify({'success': True}), 200
+
+
+@admin_bp.route('/hierarchy-template')
+@login_required
+@admin_required
+def hierarchy_template():
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['ID', 'Name', 'Parent_ID'])
+    writer.writerow([1, 'A', ''])
+    writer.writerow([2, 'B', 1])
+    writer.writerow([3, 'C', 1])
+    writer.writerow([4, 'D', 2])
+    writer.writerow([5, 'E', 2])
+    output.seek(0)
+
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=hierarchy_template.csv'}
+    )
+
+
+@admin_bp.route('/hierarchy-bulk-upload', methods=['POST'])
+@login_required
+@admin_required
+def hierarchy_bulk_upload():
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'success': False, 'message': 'No file uploaded.'}), 400
+
+    filename = file.filename.lower()
+    rows = []
+
+    if filename.endswith('.csv'):
+        stream = io.StringIO(file.stream.read().decode('utf-8-sig'))
+        reader = csv.DictReader(stream)
+        for row in reader:
+            rows.append({
+                'id': row.get('ID') and row.get('ID').strip(),
+                'name': row.get('Name') and row.get('Name').strip(),
+                'parent_id': row.get('Parent_ID') and row.get('Parent_ID').strip()
+            })
+    elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+        if not openpyxl:
+            return jsonify({'success': False, 'message': 'openpyxl is required for Excel upload.'}), 500
+        wb = openpyxl.load_workbook(file.stream, data_only=True)
+        ws = wb.active
+        headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+        header_map = {h: i for i, h in enumerate(headers)}
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rows.append({
+                'id': str(row[header_map.get('ID')]).strip() if row[header_map.get('ID')] is not None else '',
+                'name': str(row[header_map.get('Name')]).strip() if row[header_map.get('Name')] is not None else '',
+                'parent_id': str(row[header_map.get('Parent_ID')]).strip() if row[header_map.get('Parent_ID')] is not None else ''
+            })
+    else:
+        return jsonify({'success': False, 'message': 'Unsupported file type.'}), 400
+
+    import_ids = set()
+    for r in rows:
+        if not r['id'] or not r['name']:
+            return jsonify({'success': False, 'message': 'Each row must have ID and Name.'}), 400
+        if r['id'] in import_ids:
+            return jsonify({'success': False, 'message': f'Duplicate ID {r["id"]} in file.'}), 400
+        import_ids.add(r['id'])
+
+    pending = rows[:]
+    new_map = {}
+    created = 0
+
+    while pending:
+        before = len(pending)
+        for r in pending[:]:
+            parent_val = r['parent_id']
+            parent_db_id = None
+
+            if parent_val not in (None, '', 'None'):
+                try:
+                    parent_val_int = int(parent_val)
+                except ValueError:
+                    return jsonify({'success': False, 'message': f'Invalid Parent_ID {parent_val}.'}), 400
+
+                parent_db_id = new_map.get(str(parent_val_int))
+                if parent_db_id is None:
+                    existing_parent = TreeData.query.get(parent_val_int)
+                    if existing_parent:
+                        parent_db_id = existing_parent.id
+
+                if parent_db_id is None:
+                    continue
+
+            node = TreeData(name=r['name'], parent_id=parent_db_id)
+            db.session.add(node)
+            db.session.flush()
+            new_map[str(r['id'])] = node.id
+            pending.remove(r)
+            created += 1
+
+        if len(pending) == before:
+            return jsonify({'success': False, 'message': 'Could not resolve some Parent_ID values; check ID relationships.'}), 400
+
+    db.session.commit()
+    return jsonify({'success': True, 'created': created}), 201
 
 
 @admin_bp.route('/reports')

@@ -43,6 +43,31 @@ class Attendance(db.Model):
         return f'<Attendance {self.id} - User {self.user_id}>'
 
 
+class TreeData(db.Model):
+    __tablename__ = 'tree_data'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), nullable=False)
+    parent_id = db.Column(db.Integer, db.ForeignKey('tree_data.id', ondelete='CASCADE'))
+
+    parent = db.relationship(
+        'TreeData',
+        remote_side=[id],
+        backref=db.backref('children', cascade='all, delete-orphan')
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'parent_id': self.parent_id,
+            'children': [child.to_dict() for child in sorted(self.children, key=lambda x: x.id)]
+        }
+
+    def __repr__(self):
+        return f'<TreeData {self.id} - {self.name}>'
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))

@@ -1,0 +1,296 @@
+﻿{% extends 'base.html' %}
+
+{% block title %}Hierarchy{% endblock %}
+
+{% block content %}
+
+<style>
+body {
+    background: #0b3d5c;
+    color: white;
+}
+
+.tree-title {
+    text-align: center;
+    font-size: 32px;
+    font-weight: bold;
+    margin: 20px 0;
+}
+
+.tree {
+    display: flex;
+    justify-content: center;
+    overflow-x: auto;
+}
+
+.tree ul {
+    padding-top: 20px;
+    position: relative;
+    display: flex;
+    justify-content: center;
+}
+
+.tree li {
+    list-style: none;
+    text-align: center;
+    position: relative;
+    padding: 20px 10px 0 10px;
+}
+
+.tree li::before, .tree li::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    width: 50%;
+    height: 20px;
+    border-top: 2px solid #aaa;
+}
+
+.tree li::before { left: 0; }
+
+.tree li::after {
+    right: 0;
+    border-left: 2px solid #aaa;
+}
+
+.tree li:only-child::before,
+.tree li:only-child::after {
+    display: none;
+}
+
+.tree li:first-child::before { border: none; }
+.tree li:last-child::after { border: none; }
+
+.tree ul ul::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    border-left: 2px solid #aaa;
+    height: 20px;
+}
+
+.node {
+    border: 1px solid #ccc;
+    padding: 8px 14px;
+    border-radius: 8px;
+    background: transparent;
+    color: white;
+    display: inline-block;
+    min-width: 90px;
+}
+
+.node.highlight {
+    background: #d9e6f2;
+    color: black;
+}
+
+.node:hover {
+    background: #0d6efd;
+    transform: scale(1.05);
+}
+
+/* ✅ FIX MODAL INPUT COLOR */
+#nodeModal input {
+    color: black !important;
+    background: white !important;
+}
+</style>
+
+<div class="tree-title">Hierarchical Tree Structure</div>
+
+<div class="mb-4">
+    <div class="input-group">
+        <input id="newRootName" class="form-control" placeholder="New root node name" />
+        <button class="btn btn-primary" onclick="createRootNode()">Add Root Node</button>
+        <button class="btn btn-secondary" onclick="downloadTemplate()">Download Template</button>
+    </div>
+</div>
+
+<div class="mb-4">
+    <div class="input-group">
+        <input id="bulkFile" class="form-control" type="file" accept=".csv,.xlsx" />
+        <button class="btn btn-success" onclick="uploadBulk()">Upload Excel/CSV</button>
+    </div>
+</div>
+
+<div class="tree">
+    <div id="treeRoot"></div>
+</div>
+
+<!-- ✅ MODAL -->
+<div class="modal fade" id="nodeModal">
+  <div class="modal-dialog">
+    <div class="modal-content text-white">
+
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalTitle">Node</h5>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <input type="hidden" id="modalNodeId">
+
+        <div class="mb-2">
+          <label>Name</label>
+          <input type="text" id="modalNodeName" class="form-control">
+        </div>
+
+        <div class="mb-2">
+          <label>Parent ID</label>
+          <input type="number" id="modalParentId" class="form-control">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="saveNode()">Save</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const apiUrl = "{{ url_for('admin.hierarchy_data') }}";
+let modalMode = 'add';
+
+function buildTree(node, level = 0) {
+    let html = "<li>";
+    let highlightClass = (level === 1) ? "highlight" : "";
+
+    html += `<div class="node ${highlightClass}">`;
+    html += `<span>${node.name}</span><br>`;
+    html += `<button class="btn btn-sm btn-success me-1" onclick="addChildNode(${node.id})">+ Child</button>`;
+    html += `<button class="btn btn-sm btn-warning me-1" onclick="editNode(${node.id}, '${escapeJS(node.name)}', ${node.parent_id === null ? 'null' : node.parent_id})">Edit</button>`;
+    html += `<button class="btn btn-sm btn-danger" onclick="deleteNode(${node.id})">Delete</button>`;
+    html += `</div>`;
+
+    if (node.children?.length) {
+        html += "<ul>";
+        node.children.forEach(child => {
+            html += buildTree(child, level + 1);
+        });
+        html += "</ul>";
+    }
+
+    html += "</li>";
+    return html;
+}
+
+function escapeJS(str) {
+    return str.replace(/'/g, "\\'");
+}
+
+function renderTree(data) {
+    const root = document.getElementById("treeRoot");
+
+    if (!data.length) {
+        root.innerHTML = "No nodes yet";
+        return;
+    }
+
+    let html = "<ul>";
+    data.forEach(node => html += buildTree(node));
+    html += "</ul>";
+
+    root.innerHTML = html;
+}
+
+async function loadTree() {
+    const res = await fetch(apiUrl + "?t=" + Date.now());
+    const data = await res.json();
+    renderTree(data);
+}
+
+async function postNode(payload, method='POST', path='/admin/hierarchy-node') {
+    const res = await fetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return res.json();
+}
+
+/* ✅ MODAL FUNCTIONS */
+function openModal(mode, id=null, name='', parent=null) {
+    modalMode = mode;
+
+    document.getElementById('modalNodeId').value = id || '';
+    document.getElementById('modalNodeName').value = name || '';
+    document.getElementById('modalParentId').value = parent ?? '';
+
+    document.getElementById('modalTitle').innerText =
+        mode === 'add' ? 'Add Node' : 'Edit Node';
+
+    new bootstrap.Modal(document.getElementById('nodeModal')).show();
+}
+
+function addChildNode(parentId) {
+    openModal('add', null, '', parentId);
+}
+
+function editNode(id, name, parent) {
+    openModal('edit', id, name, parent);
+}
+
+async function saveNfode() {
+    const id = document.getElementById('modalNodeId').value;
+    const name = document.getElementById('modalNodeName').value.trim();
+    const parentVal = document.getElementById('modalParentId').value.trim();
+
+    if (!name) return alert("Name required");
+
+    let parent_id = parentVal ? Number(parentVal) : null;
+
+    if (modalMode === 'add') {
+        await postNode({ name, parent_id });
+    } else {
+        await postNode({ name, parent_id }, 'PUT', `/admin/hierarchy-node/${id}`);
+    }
+
+    bootstrap.Modal.getInstance(document.getElementById('nodeModal')).hide();
+    loadTree();
+}
+
+async function deleteNode(id) {
+    if (!confirm("Delete node?")) return;
+    await postNode({}, 'DELETE', `/admin/hierarchy-node/${id}`);
+    loadTree();
+}
+
+async function createRootNode() {
+    const value = document.getElementById('newRootName').value.trim();
+    if (!value) return alert("Enter name");
+
+    await postNode({ name: value });
+    document.getElementById('newRootName').value = '';
+    loadTree();
+}
+
+function downloadTemplate() {
+    window.location = '/admin/hierarchy-template';
+}
+
+async function uploadBulk() {
+    const fileInput = document.getElementById('bulkFile');
+    if (!fileInput.files.length) return alert('Select file');
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    const res = await fetch('/admin/hierarchy-bulk-upload', {
+        method: 'POST',
+        body: formData
+    });
+
+    const data = await res.json();
+    alert(`Created ${data.created}`);
+    fileInput.value = '';
+    loadTree();
+}
+
+loadTree();
+</script>
+
+{% endblock %}

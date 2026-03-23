@@ -59,7 +59,7 @@ bootstrap = Bootstrap(app)
 
 # Import models and create tables
 with app.app_context():
-    from models import User, Attendance
+    from models import User, Attendance, TreeData
     db.create_all()
 
 # Import and register blueprints
