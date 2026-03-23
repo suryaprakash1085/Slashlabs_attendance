@@ -158,42 +158,52 @@ def add_user():
     # Create a form for CSRF protection
     form = FlaskForm()
     
-    if request.method == 'POST' and form.validate_on_submit():
-        username = request.form.get('username')
-        email = request.form.get('email')
-        password = request.form.get('password')
-        full_name = request.form.get('full_name')
-        role = request.form.get('role')
-        department = request.form.get('department')
-        position = request.form.get('position')
-        
-        # Validate username and email
-        if User.query.filter_by(username=username).first():
-            flash('Username already exists.', 'danger')
-            return redirect(url_for('admin.add_user'))
-        
-        if User.query.filter_by(email=email).first():
-            flash('Email already exists.', 'danger')
-            return redirect(url_for('admin.add_user'))
-        
-        # Create new user
-        new_user = User(
-            username=username,
-            email=email,
-            full_name=full_name,
-            role=role,
-            department=department,
-            position=position
-        )
-        new_user.set_password(password)
-        
-        db.session.add(new_user)
-        db.session.commit()
-        
-        flash('User has been created successfully.', 'success')
-        return redirect(url_for('admin.users'))
+    # Get distinct departments and positions for dropdowns
+    departments = db.session.query(User.department).filter(User.department != None).distinct().all()
+    departments = [d[0] for d in departments]
+    positions = db.session.query(User.position).filter(User.position != None).distinct().all()
+    positions = [p[0] for p in positions]
     
-    return render_template('admin/edit_user.html', user=None, form=form)
+    if request.method == 'POST':
+        if form.validate_on_submit():
+            username = request.form.get('username')
+            email = request.form.get('email')
+            password = request.form.get('password')
+            full_name = request.form.get('full_name')
+            role = request.form.get('role')
+            department = request.form.get('department')
+            position = request.form.get('position')
+            
+            # Validate username and email
+            if User.query.filter_by(username=username).first():
+                flash('Username already exists.', 'danger')
+                return redirect(url_for('admin.add_user'))
+            
+            if User.query.filter_by(email=email).first():
+                flash('Email already exists.', 'danger')
+                return redirect(url_for('admin.add_user'))
+            
+            # Create new user
+            new_user = User(
+                username=username,
+                email=email,
+                full_name=full_name,
+                role=role,
+                department=department,
+                position=position
+            )
+            new_user.set_password(password)
+            
+            db.session.add(new_user)
+            db.session.commit()
+            
+            flash('User has been created successfully.', 'success')
+            return redirect(url_for('admin.users'))
+        else:
+            flash('Please fill all required fields correctly.', 'danger')
+            return redirect(url_for('admin.add_user'))
+    
+    return render_template('admin/edit_user.html', user=None, form=form, departments=departments, positions=positions)
 
 
 @admin_bp.route('/users/edit/<int:user_id>', methods=['GET', 'POST'])
@@ -205,35 +215,45 @@ def edit_user(user_id):
     # Create a form for CSRF protection
     form = FlaskForm()
     
-    if request.method == 'POST' and form.validate_on_submit():
-        email = request.form.get('email')
-        full_name = request.form.get('full_name')
-        role = request.form.get('role')
-        department = request.form.get('department')
-        position = request.form.get('position')
-        password = request.form.get('password')
-        
-        # Check if email already exists
-        if email != user.email and User.query.filter_by(email=email).first():
-            flash('Email already exists.', 'danger')
-            return redirect(url_for('admin.edit_user', user_id=user_id))
-        
-        # Update user
-        user.email = email
-        user.full_name = full_name
-        user.role = role
-        user.department = department
-        user.position = position
-        
-        if password:
-            user.set_password(password)
-        
-        db.session.commit()
-        
-        flash('User has been updated successfully.', 'success')
-        return redirect(url_for('admin.users'))
+    # Get distinct departments and positions for dropdowns
+    departments = db.session.query(User.department).filter(User.department != None).distinct().all()
+    departments = [d[0] for d in departments]
+    positions = db.session.query(User.position).filter(User.position != None).distinct().all()
+    positions = [p[0] for p in positions]
     
-    return render_template('admin/edit_user.html', user=user, form=form)
+    if request.method == 'POST':
+        if form.validate_on_submit():
+            email = request.form.get('email')
+            full_name = request.form.get('full_name')
+            role = request.form.get('role')
+            department = request.form.get('department')
+            position = request.form.get('position')
+            password = request.form.get('password')
+            
+            # Check if email already exists
+            if email != user.email and User.query.filter_by(email=email).first():
+                flash('Email already exists.', 'danger')
+                return redirect(url_for('admin.edit_user', user_id=user_id))
+            
+            # Update user
+            user.email = email
+            user.full_name = full_name
+            user.role = role
+            user.department = department
+            user.position = position
+            
+            if password:
+                user.set_password(password)
+            
+            db.session.commit()
+            
+            flash('User has been updated successfully.', 'success')
+            return redirect(url_for('admin.users'))
+        else:
+            flash('Please fill all required fields correctly.', 'danger')
+            return redirect(url_for('admin.edit_user', user_id=user_id))
+    
+    return render_template('admin/edit_user.html', user=user, form=form, departments=departments, positions=positions)
 
 
 @admin_bp.route('/users/delete/<int:user_id>', methods=['POST'])
@@ -330,7 +350,8 @@ def delete_attendance(attendance_id):
 @admin_required
 def hierarchical():
     # The page fetches the tree via AJAX from /admin/hierarchy-data
-    return render_template('admin/Hierarchical.html')
+    users = User.query.order_by(User.full_name).all()
+    return render_template('admin/Hierarchical.html', users=users)
 
 
 def _build_tree():

@@ -101,7 +101,12 @@ body {
 
 <div class="mb-4">
     <div class="input-group">
-        <input id="newRootName" class="form-control" placeholder="New root node name" />
+        <select id="newRootName" class="form-control">
+            <option value="">Select User</option>
+            {% for user in users %}
+            <option value="{{ user.full_name }}">{{ user.full_name }}</option>
+            {% endfor %}
+        </select>
         <button class="btn btn-primary" onclick="createRootNode()">Add Root Node</button>
         <button class="btn btn-secondary" onclick="downloadTemplate()">Download Template</button>
     </div>
@@ -133,7 +138,12 @@ body {
 
         <div class="mb-2">
           <label>Name</label>
-          <input type="text" id="modalNodeName" class="form-control">
+          <select id="modalNodeName" class="form-control">
+            <option value="">Select User</option>
+            {% for user in users %}
+            <option value="{{ user.full_name }}">{{ user.full_name }}</option>
+            {% endfor %}
+          </select>
         </div>
 
         <div class="mb-2">
@@ -154,6 +164,48 @@ body {
 <script>
 const apiUrl = "{{ url_for('admin.hierarchy_data') }}";
 let modalMode = 'add';
+let currentTreeData = [];
+const allUsers = [
+    {% for user in users %}
+    { id: {{ user.id }}, name: "{{ user.full_name }}" },
+    {% endfor %}
+];
+
+function getUsedUserNames() {
+    const used = new Set();
+    function collect(nodes) {
+        nodes.forEach(node => {
+            if (node.name) used.add(node.name);
+            if (node.children && node.children.length) collect(node.children);
+        });
+    }
+    collect(currentTreeData);
+    return used;
+}
+
+function renderUserOptions(selectedName = '') {
+    const select = document.getElementById('modalNodeName');
+    const rootSelect = document.getElementById('newRootName');
+    const usedNames = getUsedUserNames();
+
+    const optionHtml = (user, selected) => {
+        const disabled = user.name !== selected && usedNames.has(user.name);
+        return `<option value="${user.name}" ${selected ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${user.name}${disabled ? ' (used)' : ''}</option>`;
+    };
+
+    const rootOptions = ['<option value="">Select User</option>'];
+    const modalOptions = ['<option value="">Select User</option>'];
+
+    allUsers.forEach(user => {
+        const isSelected = user.name === selectedName;
+        const disabled = user.name !== selectedName && usedNames.has(user.name);
+        rootOptions.push(`<option value="${user.name}" ${disabled ? 'disabled' : ''}>${user.name}${disabled ? ' (used)' : ''}</option>`);
+        modalOptions.push(`<option value="${user.name}" ${isSelected ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${user.name}${disabled ? ' (used)' : ''}</option>`);
+    });
+
+    if (rootSelect) rootSelect.innerHTML = rootOptions.join('');
+    if (select) select.innerHTML = modalOptions.join('');
+}
 
 function buildTree(node, level = 0) {
     let html = "<li>";
@@ -183,10 +235,12 @@ function escapeJS(str) {
 }
 
 function renderTree(data) {
+    currentTreeData = data;
     const root = document.getElementById("treeRoot");
 
     if (!data.length) {
         root.innerHTML = "No nodes yet";
+        renderUserOptions();
         return;
     }
 
@@ -195,6 +249,7 @@ function renderTree(data) {
     html += "</ul>";
 
     root.innerHTML = html;
+    renderUserOptions();
 }
 
 async function loadTree() {
@@ -216,6 +271,7 @@ async function postNode(payload, method='POST', path='/admin/hierarchy-node') {
 function openModal(mode, id=null, name='', parent=null) {
     modalMode = mode;
 
+    renderUserOptions(name);
     document.getElementById('modalNodeId').value = id || '';
     document.getElementById('modalNodeName').value = name || '';
     document.getElementById('modalParentId').value = parent ?? '';
@@ -234,12 +290,16 @@ function editNode(id, name, parent) {
     openModal('edit', id, name, parent);
 }
 
-async function saveNfode() {
+async function saveNode() {
     const id = document.getElementById('modalNodeId').value;
-    const name = document.getElementById('modalNodeName').value.trim();
+    const nameElement = document.getElementById('modalNodeName');
+    let name = nameElement.value.trim();
     const parentVal = document.getElementById('modalParentId').value.trim();
 
-    if (!name) return alert("Name required");
+    if (!name) {
+        alert("Name required");
+        return;
+    }
 
     let parent_id = parentVal ? Number(parentVal) : null;
 
@@ -250,22 +310,28 @@ async function saveNfode() {
     }
 
     bootstrap.Modal.getInstance(document.getElementById('nodeModal')).hide();
-    loadTree();
+    await loadTree();
+    renderUserOptions('');
 }
 
 async function deleteNode(id) {
     if (!confirm("Delete node?")) return;
     await postNode({}, 'DELETE', `/admin/hierarchy-node/${id}`);
-    loadTree();
+    await loadTree();
+    renderUserOptions('');
 }
 
 async function createRootNode() {
     const value = document.getElementById('newRootName').value.trim();
-    if (!value) return alert("Enter name");
+    if (!value) return alert("Select a user first");
+
+    const usedNames = getUsedUserNames();
+    if (usedNames.has(value)) return alert("This user is already used in the tree.");
 
     await postNode({ name: value });
     document.getElementById('newRootName').value = '';
-    loadTree();
+    await loadTree();
+    renderUserOptions('');
 }
 
 function downloadTemplate() {

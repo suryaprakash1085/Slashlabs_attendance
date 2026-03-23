@@ -58,14 +58,22 @@
                     
                     <div class="mb-3">
                         <label for="department" class="form-label">Department</label>
-                        <input type="text" class="form-control" id="department" name="department" 
-                            {% if user and user.department %}value="{{ user.department }}"{% endif %}>
+                        <select class="form-select" id="department" name="department">
+                            <option value="">Select Department</option>
+                            {% for dept in departments %}
+                            <option value="{{ dept }}" {% if user and user.department == dept %}selected{% endif %}>{{ dept }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
                     
                     <div class="mb-3">
                         <label for="position" class="form-label">Position</label>
-                        <input type="text" class="form-control" id="position" name="position" 
-                            {% if user and user.position %}value="{{ user.position }}"{% endif %}>
+                        <select class="form-select" id="position" name="position">
+                            <option value="">Select Position</option>
+                            {% for pos in positions %}
+                            <option value="{{ pos }}" {% if user and user.position == pos %}selected{% endif %}>{{ pos }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
                     
                     <div class="mb-3">
