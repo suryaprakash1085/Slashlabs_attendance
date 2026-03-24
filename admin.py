@@ -242,6 +242,7 @@ def edit_user(user_id):
             user.department = department
             user.position = position
             
+            
             if password:
                 user.set_password(password)
             
